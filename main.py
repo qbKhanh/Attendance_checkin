@@ -170,8 +170,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # data_create_csv = data_create_csv.strftime("%m-%d")
         df.to_csv(f'{data_create_csv}.csv',index=False)
 
-
-
 app = QApplication(sys.argv)
 window = MainWindow()
 window.show()
