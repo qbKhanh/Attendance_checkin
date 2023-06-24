@@ -1,0 +1,8 @@
+facenet_pytorch
+opencv-python
+joblib
+scikit-learn
+PyQt5
+pandas
+unidecode
+chardet

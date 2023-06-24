@@ -1,173 +1,178 @@
-from facenet_pytorch import InceptionResnetV1, fixed_image_standardization
-from torchvision import transforms
-from facenet_pytorch import MTCNN
-import torch
-import cv2
-from PIL import Image
-import numpy as np
-
-from datetime import datetime
 import sys
-import os
-import glob
-import time
-import joblib
+from PIL import Image
+import datetime
+from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtWidgets import QDialog, QTableWidget, QTableWidgetItem, QVBoxLayout
+from PyQt5 import QtGui
+from PyQt5.QtGui import *
+from PyQt5.QtCore import Qt, QTimer, QTime
+from GUI.demo import Ui_MainWindow
+from GUI.StudentList import StudentListDialog
+from sklearn.decomposition import PCA
+from csv import writer
+import cv2
+import numpy as np
+import pandas as pd
 
-from sklearn.preprocessing import Normalizer, LabelEncoder
-from sklearn.svm import SVC
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from notneed.main import *
 
+class MainWindow(QMainWindow, Ui_MainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setupUi(self)
 
-from utils import *
+        self.input_name_current = None
+        self.input_mssv_current = None
+        self.student_now = None
+        self.time_now = None
+        self.df = pd.read_csv('data_format.csv')
+        self.student_in_class = self.df['Name'].tolist()
 
+        self.log = ''
+        self.recog = Recognition()
 
-class Recognition:
-    def __init__(self, url=''):
-        # self.AUG_IMG_DATA = 'Dataset\Augmented_data'
-        # self.ORI_IMG_DATA = 'Dataset\Images_crop'
-        # self.NEW_DATA = 'Dataset\Images_new'
-        self.IMG_DATA = 'Dataset\Images'
-        self.CHECKPOINT_PATH = 'Dataset\Checkpoint'
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        self.model = InceptionResnetV1(
-            classify=False,
-            pretrained="casia-webface"
-        ).to(self.device)
-        self.model.eval()
-        self.mtcnn = MTCNN(margin = 20, select_largest=True, keep_all=False, post_process=False, device = self.device)
-        self.url = url
-
-        model_path = os.path.join(self.CHECKPOINT_PATH, 'svm.pkl')
-        label_path = os.path.join(self.CHECKPOINT_PATH, 'labels.pkl')
-        self.svm = joblib.load(model_path)
-        self.labels = joblib.load(label_path)
-        self.in_encoder = Normalizer(norm='l2')
+        self.student_list.clicked.connect(lambda: self.open_file())
+        self.add.clicked.connect(self.add_student)
+        self.start_program()
         
-    def add_new(self,usr_name, count=50, leap=1):
-        # usr_name = input("Input ur name: ")
-        USR_PATH = os.path.join(self.IMG_DATA, usr_name)
-        
-        if self.url:
-            cap = cv2.VideoCapture('http://10.61.24.167:4747/video')
+    # add student to data
+    def add_student(self):
+        self.log += 'log> Adding new student\n'
+        self.input_name_current = self.name_input.toPlainText()
+        self.input_mssv_current = self.mssv_input.toPlainText()
+
+        if (len(self.input_name_current) == 0) or (len(self.input_mssv_current) == 0):
+            if (len(self.input_name_current) == 0):
+                self.log += '   Name empty\n' 
+            if (len(self.input_mssv_current) == 0):
+                self.log += '   MSSV empty\n' 
         else:
-            cap = cv2.VideoCapture(0)
+            self.log += f'  Name: {self.input_name_current}\n  MSSV: {self.input_mssv_current}\n'
+            data_create_csv = datetime.today().date().strftime('%d-%m-%y')
+            try:
+                df = pd.read_csv(f'{data_create_csv}.csv')
+            except:
+                df = pd.read_csv('data_format.csv')
+            self.student_in_class.append(self.input_name_current)
+            new_row = {'roll_no': self.input_mssv_current, 'Name': self.input_name_current, 'Status': 'Absent', 'Time': '-', 'Note': '-'}
+            df = df.append(new_row, ignore_index=True)
+            df.to_csv(f'{data_create_csv}.csv',index=False)
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT,480)
-        while cap.isOpened() and count:
-            isSuccess, frame = cap.read()
-            if self.url:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            if self.mtcnn(frame) is not None and leap%2:
-                path = str(USR_PATH + f'/{count}.JPG')
-                face_img = self.mtcnn(frame, save_path = path)
-                count-=1
-            leap+=1
-            cv2.imshow('Face Capturing', frame)
-            if cv2.waitKey(1)&0xFF == ord('q'):
-                break
-        cap.release()
-        cv2.destroyAllWindows()
+            self.name_input.clear()
+            self.mssv_input.clear()
 
-    # def augmentation_data(self):
-    #     transform_data = transforms.Compose([
-    #     transforms.ToTensor(),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
-    #     transforms.ToPILImage(),
-    #     ])
-    #     for usr in os.listdir(self.IMG_DATA):
-    #         usr_path = os.path.join(self.IMG_DATA, usr)
-    #         aug_usr_path = os.path.join(self.AUG_IMG_DATA, usr)
-    #         os.mkdir(aug_usr_path)
-    #         for img in os.listdir(usr_path):
-    #             img_path = os.path.join(usr_path, img)
-    #             ori_img = Image.open(img_path)
-    #             aug_img = transform_data(ori_img)
-    #             ori_img.save(aug_usr_path + '/' + img)
-    #             aug_img.save(aug_usr_path + '/_' + img)
+            self.log += 'log> Training.....\n'
+            self.print_log()
 
-    def svm_Classify(self):
-        embeddings = []
-        names = []
-        for usr in os.listdir(self.IMG_DATA):
-            for file in glob.glob(os.path.join(self.IMG_DATA, usr)+'/*.JPG'):
-                try:
-                    img = Image.open(file)
-                except:
-                    continue
-                with torch.no_grad():
-                    embed = self.model(trans(img).unsqueeze(0).to(self.device))
+            self.recog.add_new(self.input_name_current)
+            
+            
+            self.recog.svm_Classify()
+            self.log += '   Complete!\n' 
+            self.print_log()
 
-                embeddings.append(np.array(embed.cpu()[0])) # 1 cai list n cai [1,512]
-                names.append(usr)
+
+
+        self.print_log()
+        self.cap = cv2.VideoCapture(0)
+
+    # print Log
+    def print_log(self):
+        self.check_log.setText(str(self.log))
+        self.check_log.verticalScrollBar().setValue(self.check_log.verticalScrollBar().maximum())
+
+    @staticmethod
+    def open_file():
+        data_create_csv = datetime.today().date().strftime('%d-%m-%y')
+        try:
+            df = f'{data_create_csv}.csv'
+            student_list = StudentListDialog(df)
+            student_list.exec_()
+        except:
+            df = 'data_format.csv'
+            student_list = StudentListDialog(df)
+            student_list.exec_()
         
-        X_train, X_test, y_train, y_test = train_test_split(embeddings, names, test_size=.1, random_state=42)
 
-        # 
-        in_encoder = Normalizer(norm='l2')
-        trainX = in_encoder.transform(X_train)
-        testX = in_encoder.transform(X_test)
-        out_encoder = LabelEncoder()
-        out_encoder.fit(y_train)
-        trainy = out_encoder.transform(y_train)
-        testy = out_encoder.transform(y_test)
-        model = SVC(kernel='linear', probability=True)
-        model.fit(trainX, trainy)
 
-        # predict
-        print(trainX)
-        yhat_train = model.predict(trainX)
-        yhat_test = model.predict(testX)
-        # score
-        score_train = accuracy_score(trainy, yhat_train)
-        score_test = accuracy_score(testy, yhat_test)
-        # summarize
-        print('Accuracy: train=%.3f, test=%.3f' % (score_train*100, score_test*100))
-        model_path = os.path.join(self.CHECKPOINT_PATH, 'svm.pkl')
-        label_path = os.path.join(self.CHECKPOINT_PATH, 'labels.pkl')
-        joblib.dump(model, model_path)
-        joblib.dump(out_encoder, label_path)
 
-        model_path = os.path.join(self.CHECKPOINT_PATH, 'svm.pkl')
-        label_path = os.path.join(self.CHECKPOINT_PATH, 'labels.pkl')
-        self.svm = joblib.load(model_path)
-        self.labels = joblib.load(label_path)
+    # create a timer to update the label
+    def start_program(self):
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
+        self.timer.start(30)
+        # open the default webcam
+        self.cap = cv2.VideoCapture(0)
 
-    def face_reg(self, frame):
-        boxes, prob = self.mtcnn.detect(frame)
-        if boxes is not None:
-            for box in boxes:
-                bbox = list(map(int,box.tolist()))
-                face = extract_face(bbox, frame)
-                embed = self.model(trans(face).unsqueeze(0).to(self.device))
-                embed = embed.cpu().detach().numpy()
-                embed = self.in_encoder.transform(embed)
-                y_pred_encoded = self.svm.predict(embed)
-                y_pred = self.labels.inverse_transform(y_pred_encoded)
-                
-                frame = cv2.rectangle(frame, (bbox[0],bbox[1]), (bbox[2],bbox[3]), (0,0,255), 6)
-                frame = cv2.putText(frame, str(y_pred[0]), (bbox[0],bbox[1]), cv2.FONT_HERSHEY_DUPLEX, 0.5, (0,255,0), 1, cv2.LINE_8)
+    def check_point_time(self):
+        oc_current_time = QTime.currentTime()
+        yeahh = oc_current_time.toString('hh:mm:ss')
+        format_time = yeahh.split(':')
+        hour,minute,second = format_time[0],format_time[1],format_time[2]
+        return (int(hour)*3600+int(minute)*60+int(second))
 
-            return frame, y_pred[0], face
-        return frame
+    def update_frame(self):
+        # read a frame from the webcam
+        ret, frame = self.cap.read()
+        if ret:
+            try:
+                frame, name, face = self.recog.face_reg(frame)
+                if name != self.student_now:
+                    self.student_now = name
+                    self.time_now = self.check_point_time()
+                else:
+                    duration = self.check_point_time() - self.time_now
+                    if duration >= 5:
+                        if name in self.student_in_class:
+                            df_index = self.student_in_class.index(f"{name}")
+                            self.student_in_class.pop(df_index)
+                            oc_current_time = QTime.currentTime()
+                            time = oc_current_time.toString('hh:mm:ss')
+                            self.log += 'log> Student Check-in\n'
+                            self.log += f'   {time} - {self.student_now} - Attend\n' 
+                            self.print_log()
+                            self.status_csv(name,time)
 
-# if __name__ == '__main__':
-#     reg = Recognition()
-#     for i in os.listdir('Nguyen Duc Huy'):
-#         path = os.path.join('Nguyen Duc Huy', i)
-#         image = cv2.imread(path)
-#         try:
-#             frame,y_pred = reg.face_reg(image)
-#             print(y_pred)
-#             print(y_pred)
-#         except:
-#             print('Error:', path)
-#     image = cv2.imread('Ngoc-Trinh-2.JPG')
-#     frame,y_pred,y_pred_encoded = reg.face_reg(image)
-#     print(y_pred)
-#     print(y_pred_encoded)
-    # reg.add_new()
-    # reg.augmentation_data()
-    # reg.svm_Classify()
+
+                face = np.array(face)
+                face = cv2.cvtColor(face,cv2.COLOR_RGB2BGR)
+                #face = cv2.resize(face,(,10))
+            # convert the OpenCV frame to a QPixmap
+                qimage_2 = QImage(face.data, face.shape[1], face.shape[0], QImage.Format_RGB888)
+                pixmap_2 = QPixmap.fromImage(qimage_2)
+                self.face.setPixmap(pixmap_2)
+        
+            except:
+                print('No Face')
+                frame = self.recog.face_reg(frame)
+
+
+        try:
+            frame = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+            # convert the OpenCV frame to a QPixmap
+            qimage = QImage(frame.data, frame.shape[1], frame.shape[0], QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimage)
+
+            # update the label with the new frame
+            self.frame.setPixmap(pixmap)
+        except:pass
+
+    def status_csv(self,name,time):
+        data_create_csv = datetime.today().date().strftime('%d-%m-%y')
+        try:
+            df = pd.read_csv(f'{data_create_csv}.csv')
+        except:
+            df = pd.read_csv('data_format.csv')
+        idx = df[df['Name'] == name].index.values[0]
+        df.iloc[idx][2] = 'present'
+        df.iloc[idx][3] = time
+        
+        # data_create_csv = data_create_csv.strftime("%m-%d")
+        df.to_csv(f'{data_create_csv}.csv',index=False)
+
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec_())
