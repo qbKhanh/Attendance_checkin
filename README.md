@@ -1,6 +1,6 @@
 # Attendance_checkin
-A project for school assignment \
-Attendance_checkin use FaceNet, MTCNN, SVM for Face Recognition and PyQT5 for simple GUI
+This project is a school assignment and is made with the main purpose of learning \
+Attendance_checkin uses FaceNet, MTCNN, SVM for Face Recognition, and PyQT5 for simple GUI
 
 # Installation
 1) `git clone git@github.com:qbKhanh/Attendance_checkin.git` to clone repo
